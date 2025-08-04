@@ -1,78 +1,95 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Box, Typography, Stack,
-  TextField, Button,
-  Paper, TableContainer, Table,
-  TableHead, TableRow, TableCell,
-  TableBody, IconButton
+  Box, TextField, Button,
+  Paper, List, ListItem, ListItemText,
+  IconButton, Typography
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useNavigate } from 'react-router-dom';
+import {
+  fetchSubscriptions,
+  subscribePodcast,
+  unsubscribePodcast
+} from '../services/api';
 
 export default function PodcastsPage() {
+  const [title, setTitle] = useState('');
+  const [feedUrl, setFeedUrl] = useState('');
   const [podcasts, setPodcasts] = useState([]);
-  const [podcastName, setPodcastName] = useState('');
   const navigate = useNavigate();
 
-  const handleAdd = () => {
-    if (!podcastName.trim()) return;
-    const newItem = {
-      id: Date.now(),
-      podcast_name: podcastName.trim(),
-      episodes: []  // will hold summaries/transcripts
-    };
-    setPodcasts(prev => [...prev, newItem]);
-    setPodcastName('');
-  };
+  useEffect(() => { load(); }, []);
 
-  const handleDelete = id => {
-    setPodcasts(prev => prev.filter(item => item.id !== id));
-  };
+  async function load() {
+    try {
+      setPodcasts(await fetchSubscriptions());
+    } catch (e) {
+      alert(e.message);
+    }
+  }
 
-  const handleRowClick = name => {
-    navigate(`/podcasts/${encodeURIComponent(name)}`, { state: { podcasts } });
-  };
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!title || !feedUrl) return alert('Please fill both');
+    try {
+      await subscribePodcast(title, feedUrl);
+      setTitle('');
+      setFeedUrl('');
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function handleDelete(id, e) {
+    e.stopPropagation();
+    if (!window.confirm('Remove?')) return;
+    try {
+      await unsubscribePodcast(id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
 
   return (
-    <Box>
-      <Typography variant="h5" gutterBottom>My Podcasts</Typography>
+    <Box sx={{ p: 2 }}>
+      <Typography variant="h4" gutterBottom>My Podcasts</Typography>
 
-      <Stack direction="row" spacing={2} mb={2}>
+      <Box component="form" onSubmit={handleAdd} sx={{ display: 'flex', gap: 1, mb: 2 }}>
         <TextField
-          label="Podcast Name"
-          value={podcastName}
-          onChange={e => setPodcastName(e.target.value)}
+          label="Title"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          required
         />
-        <Button variant="contained" onClick={handleAdd}>Add</Button>
-      </Stack>
+        <TextField
+          label="RSS URL"
+          value={feedUrl}
+          onChange={e => setFeedUrl(e.target.value)}
+          required
+        />
+        <Button type="submit" variant="contained">Add</Button>
+      </Box>
 
-      <TableContainer component={Paper} sx={{ maxHeight: 400 }}>
-        <Table stickyHeader>
-          <TableHead>
-            <TableRow>
-              <TableCell>Podcast Name</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {podcasts.map(p => (
-              <TableRow
-                key={p.id}
-                hover
-                sx={{ cursor: 'pointer' }}
-                onClick={() => handleRowClick(p.podcast_name)}
-              >
-                <TableCell>{p.podcast_name}</TableCell>
-                <TableCell align="right" onClick={e => e.stopPropagation()}>
-                  <IconButton onClick={() => handleDelete(p.id)}>
-                    <DeleteIcon />
-                  </IconButton>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      <Paper>
+        <List>
+          {podcasts.map(p => (
+            <ListItem
+              key={p.id}
+              button
+              onClick={() => navigate(`/podcasts/${p.id}`)}
+              secondaryAction={
+                <IconButton edge="end" onClick={e => handleDelete(p.id, e)}>
+                  <DeleteIcon />
+                </IconButton>
+              }
+            >
+              <ListItemText primary={p.title} secondary={p.feed_url} />
+            </ListItem>
+          ))}
+        </List>
+      </Paper>
     </Box>
   );
 }

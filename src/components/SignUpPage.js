@@ -1,8 +1,10 @@
+// src/components/SignupPage.js
 import React, { useState } from 'react';
 import {
   Box, TextField, Button, Typography, Paper
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { signupUser } from '../services/api';   // ← import your API helper
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
@@ -10,15 +12,22 @@ export default function SignupPage() {
   const [confirm, setConfirm] = useState('');
   const navigate = useNavigate();
 
-  const handleSignup = e => {
+  const handleSignup = async e => {
     e.preventDefault();
     if (password !== confirm) {
       alert('Passwords do not match');
       return;
     }
-    // TODO: call signup API
-    console.log({ email, password });
-    navigate('/login');  // redirect to login
+
+    try {
+      // call your backend
+      await signupUser({ email, password });
+      // on success, go to login
+      navigate('/login', { replace: true });
+    } catch (err) {
+      // show any error returned by the API
+      alert('Signup failed: ' + err.message);
+    }
   };
 
   return (

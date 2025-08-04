@@ -1,19 +1,31 @@
 import React, { useState } from 'react';
 import {
-  Box, TextField, Button, Typography, Paper
+  Box,
+  TextField,
+  Button,
+  Typography,
+  Paper,
+  Link as MuiLink,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useLocation } from 'react-router-dom';
+import { loginUser } from '../services/api';  // wherever you call your /auth/login
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from?.pathname || '/';
 
-  const handleLogin = e => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // TODO: call auth API
-    console.log({ email, password });
-    navigate('/');  // redirect on success
+    try {
+      const { access_token } = await loginUser({ email, password });
+      localStorage.setItem('access_token', access_token);
+      navigate(from, { replace: true });
+    } catch (err) {
+      alert('Login failed: ' + err.message);
+    }
   };
 
   return (
@@ -39,8 +51,17 @@ export default function LoginPage() {
           onChange={e => setPassword(e.target.value)}
         />
         <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }}>
-          Login
+          LOGIN
         </Button>
+      </Box>
+
+      <Box sx={{ textAlign: 'center', mt: 2 }}>
+        <Typography variant="body2">
+          Don’t have an account?{' '}
+          <MuiLink component={RouterLink} to="/signup">
+            Sign up
+          </MuiLink>
+        </Typography>
       </Box>
     </Paper>
   );
