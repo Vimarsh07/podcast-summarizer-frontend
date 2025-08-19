@@ -1,27 +1,24 @@
-// src/pages/PodcastDetailsPage.jsx
+// ======================== src/pages/PodcastDetailsPage.jsx ========================
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Box, Button, Typography, Paper,
   List, ListItem, ListItemText, Divider,
   Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
-  Stack, Chip, Avatar
+  Stack, Chip, Avatar, Tooltip, CircularProgress
 } from "@mui/material";
 import {
   getPodcast,
-  fetchEpisodes,
-  fetchLatestMetadata,              // updated API
-  transcribeAndSummarizeEpisode     // new API
+  fetchEpisodes,                 // returns selection payload incl. meta_summary
+  fetchLatestMetadata,           // queues metadata ingest
+  transcribeAndSummarizeEpisode, // POST transcribe
+  getEpisodeDetail,              // fetch full (summary + transcript)
 } from "../services/api";
 
 // ---------- helpers ----------
 function fmtDate(d) {
   if (!d) return "—";
-  try {
-    return new Date(d).toLocaleString();
-  } catch {
-    return String(d);
-  }
+  try { return new Date(d).toLocaleString(); } catch { return String(d); }
 }
 function fmtDuration(seconds) {
   if (seconds === null || seconds === undefined) return "—";
@@ -40,12 +37,6 @@ function statusColor(status) {
     default: return "default";
   }
 }
-function stripHtml(html) {
-  if (!html) return "";
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  return (el.textContent || el.innerText || "").trim();
-}
 function clampLines(lines = 2) {
   return {
     display: "-webkit-box",
@@ -63,10 +54,11 @@ export default function PodcastDetailsPage() {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Dialog state
+  // dialog state
   const [open, setOpen] = useState(false);
   const [dialogTitle, setDialogTitle] = useState("");
   const [dialogContent, setDialogContent] = useState("");
+  const [dialogLoading, setDialogLoading] = useState(false);
 
   // polling
   const pollTimer = useRef(null);
@@ -83,47 +75,33 @@ export default function PodcastDetailsPage() {
           clearInterval(pollTimer.current);
           pollTimer.current = null;
         }
-      } catch {
-        // ignore poll errors
-      }
+      } catch {}
     }, 3000);
   }, [podcastId]);
 
-  useEffect(() => {
-    return () => {
-      if (pollTimer.current) clearInterval(pollTimer.current);
-    };
-  }, []);
+  useEffect(() => () => { if (pollTimer.current) clearInterval(pollTimer.current); }, []);
 
   // loaders
   const loadPodcast = useCallback(async () => {
-    try {
-      setPodcast(await getPodcast(podcastId));
-    } catch (e) {
-      alert(e.message);
-    }
+    try { setPodcast(await getPodcast(podcastId)); }
+    catch (e) { alert(e.message); }
   }, [podcastId]);
 
   const loadEpisodes = useCallback(async () => {
     setLoading(true);
-    try {
-      setEpisodes(await fetchEpisodes(podcastId));
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setLoading(false);
-    }
+    try { setEpisodes(await fetchEpisodes(podcastId)); }
+    catch (e) { alert(e.message); }
+    finally { setLoading(false); }
   }, [podcastId]);
 
   useEffect(() => {
-    loadPodcast();
-    loadEpisodes();
+    loadPodcast(); loadEpisodes();
   }, [loadPodcast, loadEpisodes]);
 
   async function handleFetchLatest() {
     setLoading(true);
     try {
-      await fetchLatestMetadata(podcastId, 10); // queues metadata ingest
+      await fetchLatestMetadata(podcastId, 10);
       await loadEpisodes();
     } catch (e) {
       alert(e.message);
@@ -134,7 +112,6 @@ export default function PodcastDetailsPage() {
 
   async function handleTranscribe(ep) {
     try {
-      // optimistic: mark as queued
       setEpisodes(list =>
         list.map(x => (x.id === ep.id ? { ...x, transcript_status: "QUEUED" } : x))
       );
@@ -146,14 +123,37 @@ export default function PodcastDetailsPage() {
     }
   }
 
-  function handleOpenDialog(title, content) {
-    setDialogTitle(title);
-    setDialogContent(content || "(empty)");
+  async function openSummary(ep) {
+    setDialogTitle("Summary");
+    setDialogContent("");
+    setDialogLoading(true);
     setOpen(true);
+    try {
+      const full = await getEpisodeDetail(ep.id);
+      setDialogContent(full.summary || "(empty)");
+    } catch (e) {
+      setDialogContent(e.message || "Failed to load summary.");
+    } finally {
+      setDialogLoading(false);
+    }
   }
-  function handleClose() {
-    setOpen(false);
+
+  async function openTranscript(ep) {
+    setDialogTitle("Transcript");
+    setDialogContent("");
+    setDialogLoading(true);
+    setOpen(true);
+    try {
+      const full = await getEpisodeDetail(ep.id);
+      setDialogContent(full.transcript || "(empty)");
+    } catch (e) {
+      setDialogContent(e.message || "Failed to load transcript.");
+    } finally {
+      setDialogLoading(false);
+    }
   }
+
+  function handleClose() { setOpen(false); }
 
   if (!podcast) return null;
 
@@ -163,28 +163,19 @@ export default function PodcastDetailsPage() {
         ← Back
       </Button>
 
-      <Typography variant="h4" gutterBottom>
-        {podcast.title}
-      </Typography>
+      <Typography variant="h4" gutterBottom>{podcast.title}</Typography>
       <Typography variant="subtitle1" color="text.secondary" gutterBottom>
         {podcast.feed_url}
       </Typography>
 
-      <Button
-        variant="contained"
-        onClick={handleFetchLatest}
-        disabled={loading}
-        sx={{ mb: 2 }}
-      >
+      <Button variant="contained" onClick={handleFetchLatest} disabled={loading} sx={{ mb: 2 }}>
         {loading ? "Loading…" : "Fetch Latest Metadata"}
       </Button>
 
       <Paper>
         <List>
           {episodes.length === 0 && (
-            <ListItem>
-              <ListItemText primary="No episodes found." />
-            </ListItem>
+            <ListItem><ListItemText primary="No episodes found." /></ListItem>
           )}
 
           {episodes.map((ep, idx) => {
@@ -194,26 +185,15 @@ export default function PodcastDetailsPage() {
 
             return (
               <React.Fragment key={ep.id}>
-                <ListItem
-                  alignItems="flex-start"
-                  sx={{ flexDirection: "column", alignItems: "stretch", py: 2 }}
-                >
+                <ListItem alignItems="flex-start" sx={{ flexDirection: "column", alignItems: "stretch", py: 2 }}>
                   {/* Row: index + avatar + title + status chip */}
                   <Stack direction="row" alignItems="center" spacing={2}>
-                    <Typography
-                      variant="subtitle1"
-                      sx={{ fontWeight: "bold", minWidth: 28, textAlign: "right" }}
-                    >
+                    <Typography variant="subtitle1" sx={{ fontWeight: "bold", minWidth: 28, textAlign: "right" }}>
                       {idx + 1}.
                     </Typography>
 
                     {ep.image_url ? (
-                      <Avatar
-                        variant="rounded"
-                        src={ep.image_url}
-                        alt={ep.title}
-                        sx={{ width: 56, height: 56 }}
-                      />
+                      <Avatar variant="rounded" src={ep.image_url} alt={ep.title} sx={{ width: 56, height: 56 }} />
                     ) : (
                       <Avatar variant="rounded" sx={{ width: 56, height: 56 }}>
                         {ep.title ? ep.title.charAt(0) : "E"}
@@ -222,10 +202,7 @@ export default function PodcastDetailsPage() {
 
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Stack direction="row" alignItems="center" spacing={1}>
-                        <Typography
-                          variant="subtitle1"
-                          sx={{ fontWeight: 600, ...clampLines(1), flex: 1, minWidth: 0 }}
-                        >
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, ...clampLines(1), flex: 1, minWidth: 0 }}>
                           {ep.title || "Untitled episode"}
                         </Typography>
                         <Chip
@@ -241,9 +218,10 @@ export default function PodcastDetailsPage() {
                         {fmtDate(ep.pub_date)} • {fmtDuration(ep.duration_seconds)}
                       </Typography>
 
-                      {!!ep.summary && (
-                        <Typography variant="body2" sx={{ mt: 0.5, ...clampLines(3) }}>
-                          {stripHtml(ep.summary)}
+                      {/* CHANGED: show plain-text metadata summary (from backend meta_summary) */}
+                      {ep.meta_summary && (
+                        <Typography variant="body2" sx={{ mt: 0.75, ...clampLines(3) }}>
+                          {ep.meta_summary}
                         </Typography>
                       )}
                     </Box>
@@ -255,24 +233,16 @@ export default function PodcastDetailsPage() {
                       size="small"
                       variant="contained"
                       onClick={() => handleTranscribe(ep)}
-                      disabled={working || done || !ep.audio_url}
+                      disabled={working || done}
                     >
                       {working ? "Processing…" : done ? "Completed" : "Transcribe & Summarize"}
                     </Button>
 
-                    <Button
-                      size="small"
-                      disabled={!done || !ep.summary}
-                      onClick={() => handleOpenDialog("Summary", stripHtml(ep.summary))}
-                    >
+                    <Button size="small" disabled={!done} onClick={() => openSummary(ep)}>
                       View Summary
                     </Button>
 
-                    <Button
-                      size="small"
-                      disabled={!done || !ep.transcript}
-                      onClick={() => handleOpenDialog("Transcript", ep.transcript)}
-                    >
+                    <Button size="small" disabled={!done} onClick={() => openTranscript(ep)}>
                       View Transcript
                     </Button>
                   </Stack>
@@ -287,12 +257,16 @@ export default function PodcastDetailsPage() {
       <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
         <DialogTitle>{dialogTitle}</DialogTitle>
         <DialogContent dividers>
-          <DialogContentText
-            component="pre"
-            sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-          >
-            {dialogContent}
-          </DialogContentText>
+          {dialogLoading ? (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <CircularProgress size={20} />
+              <Typography variant="body2">Loading…</Typography>
+            </Stack>
+          ) : (
+            <DialogContentText component="pre" sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {dialogContent}
+            </DialogContentText>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClose}>Close</Button>
