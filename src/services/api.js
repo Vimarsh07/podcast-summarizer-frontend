@@ -73,12 +73,30 @@ export async function unsubscribePodcast(podcast_id) {
  * { id, title, pub_date, duration_seconds, image_url,
  *   has_summary_html, has_transcript_html, transcript_status, transcript_origin }
  */
-export async function fetchEpisodes(podcast_id) {
-  const res = await fetch(`${API_ROOT}/episodes/${podcast_id}`, {
-    headers: authHeaders(),
-  });
+export async function fetchEpisodes(podcast_id, { page = 1, pageSize = 20 } = {}) {
+  const url = new URL(`${API_ROOT}/episodes/${podcast_id}`);
+  url.search = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  }).toString();
+
+  const res = await fetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const data = await res.json();
+
+  // Normalize just in case your backend still returns an array somewhere.
+  // After you fully switch the backend, this guard is harmless.
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      page,
+      page_size: pageSize,
+      total: data.length,
+      total_pages: 1,
+    };
+  }
+
+  return data; // { items, page, page_size, total, total_pages }
 }
 
 /**

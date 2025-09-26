@@ -5,17 +5,17 @@ import {
   Box, Button, Typography, Paper,
   List, ListItem, ListItemText, Divider,
   Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
-  Stack, Chip, Avatar, Tooltip, CircularProgress
+  Stack, Chip, Avatar, Tooltip, CircularProgress,
 } from "@mui/material";
 import {
   getPodcast,
-  fetchEpisodes,                 // returns selection payload incl. meta_summary
+  fetchEpisodes,                 // now returns { items, page, page_size, total, total_pages }
   fetchLatestMetadata,           // queues metadata ingest
   transcribeAndSummarizeEpisode, // POST transcribe
-  getEpisodeDetail,              // fetch full (summary + transcript)
+  getEpisodeDetail,              // fetch full (summary + transcript) — also clears is_new server-side
 } from "../services/api";
 
-// ---------- helpers ----------
+// ---------- helpers (missing earlier—added back) ----------
 function fmtDate(d) {
   if (!d) return "—";
   try { return new Date(d).toLocaleString(); } catch { return String(d); }
@@ -54,21 +54,37 @@ export default function PodcastDetailsPage() {
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // pagination
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
+
   // dialog state
   const [open, setOpen] = useState(false);
   const [dialogTitle, setDialogTitle] = useState("");
   const [dialogContent, setDialogContent] = useState("");
   const [dialogLoading, setDialogLoading] = useState(false);
 
-  // polling
+  // polling (merge status only)
   const pollTimer = useRef(null);
   const startPoll = useCallback(() => {
     if (pollTimer.current) return;
     pollTimer.current = setInterval(async () => {
       try {
-        const fresh = await fetchEpisodes(podcastId);
-        setEpisodes(fresh);
-        const stillRunning = fresh.some(e =>
+        const fresh = await fetchEpisodes(podcastId, { page: 1, pageSize });
+        const freshItems = fresh.items || fresh; // guard if API temporarily returns array
+        // merge transcript_status for any items we already have
+        setEpisodes(prev => {
+          const byId = new Map(prev.map(e => [e.id, e]));
+          for (const e of freshItems) {
+            if (byId.has(e.id)) {
+              const old = byId.get(e.id);
+              byId.set(e.id, { ...old, transcript_status: e.transcript_status });
+            }
+          }
+          return Array.from(byId.values());
+        });
+        const stillRunning = freshItems.some(e =>
           ["QUEUED", "TRANSCRIBING"].includes((e.transcript_status || "").toUpperCase())
         );
         if (!stillRunning) {
@@ -77,7 +93,7 @@ export default function PodcastDetailsPage() {
         }
       } catch {}
     }, 3000);
-  }, [podcastId]);
+  }, [podcastId, pageSize]);
 
   useEffect(() => () => { if (pollTimer.current) clearInterval(pollTimer.current); }, []);
 
@@ -87,22 +103,38 @@ export default function PodcastDetailsPage() {
     catch (e) { alert(e.message); }
   }, [podcastId]);
 
-  const loadEpisodes = useCallback(async () => {
+  const loadEpisodes = useCallback(async (p = 1, { replace } = { replace: true }) => {
     setLoading(true);
-    try { setEpisodes(await fetchEpisodes(podcastId)); }
-    catch (e) { alert(e.message); }
-    finally { setLoading(false); }
-  }, [podcastId]);
+    try {
+      const data = await fetchEpisodes(podcastId, { page: p, pageSize });
+      const items = data.items || data; // guard for old shape
+      if (replace) {
+        setEpisodes(items);
+      } else {
+        setEpisodes(prev => [
+          ...prev,
+          ...items.filter(x => !prev.some(y => y.id === x.id)),
+        ]);
+      }
+      setPage(data.page ?? p);
+      setTotalPages(data.total_pages ?? 1);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [podcastId, pageSize]);
 
   useEffect(() => {
-    loadPodcast(); loadEpisodes();
+    loadPodcast();
+    loadEpisodes(1, { replace: true });
   }, [loadPodcast, loadEpisodes]);
 
   async function handleFetchLatest() {
     setLoading(true);
     try {
       await fetchLatestMetadata(podcastId, 10);
-      await loadEpisodes();
+      await loadEpisodes(1, { replace: true });
     } catch (e) {
       alert(e.message);
     } finally {
@@ -119,7 +151,7 @@ export default function PodcastDetailsPage() {
       startPoll();
     } catch (e) {
       alert(e.message);
-      loadEpisodes();
+      loadEpisodes(page, { replace: false });
     }
   }
 
@@ -131,6 +163,8 @@ export default function PodcastDetailsPage() {
     try {
       const full = await getEpisodeDetail(ep.id);
       setDialogContent(full.summary || "(empty)");
+      // reflect server-side is_new clearing
+      setEpisodes(list => list.map(x => (x.id === ep.id ? { ...x, is_new: false } : x)));
     } catch (e) {
       setDialogContent(e.message || "Failed to load summary.");
     } finally {
@@ -146,6 +180,7 @@ export default function PodcastDetailsPage() {
     try {
       const full = await getEpisodeDetail(ep.id);
       setDialogContent(full.transcript || "(empty)");
+      setEpisodes(list => list.map(x => (x.id === ep.id ? { ...x, is_new: false } : x)));
     } catch (e) {
       setDialogContent(e.message || "Failed to load transcript.");
     } finally {
@@ -154,6 +189,12 @@ export default function PodcastDetailsPage() {
   }
 
   function handleClose() { setOpen(false); }
+
+  async function handleLoadMore() {
+    if (page < totalPages && !loading) {
+      await loadEpisodes(page + 1, { replace: false });
+    }
+  }
 
   if (!podcast) return null;
 
@@ -168,9 +209,14 @@ export default function PodcastDetailsPage() {
         {podcast.feed_url}
       </Typography>
 
-      <Button variant="contained" onClick={handleFetchLatest} disabled={loading} sx={{ mb: 2 }}>
-        {loading ? "Loading…" : "Fetch Latest Metadata"}
-      </Button>
+      <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center">
+        <Button variant="contained" onClick={handleFetchLatest} disabled={loading}>
+          {loading ? "Loading…" : "Fetch Latest Metadata"}
+        </Button>
+        <Typography variant="body2" color="text.secondary">
+          Page {page} / {totalPages}
+        </Typography>
+      </Stack>
 
       <Paper>
         <List>
@@ -182,14 +228,15 @@ export default function PodcastDetailsPage() {
             const status = (ep.transcript_status || "NOT_REQUESTED").toUpperCase();
             const done = status === "COMPLETED";
             const working = ["QUEUED", "TRANSCRIBING"].includes(status);
+            const globalIndex = (page - 1) * pageSize + idx + 1;
 
             return (
               <React.Fragment key={ep.id}>
                 <ListItem alignItems="flex-start" sx={{ flexDirection: "column", alignItems: "stretch", py: 2 }}>
-                  {/* Row: index + avatar + title + status chip */}
+                  {/* Row: index + avatar + title + status chips */}
                   <Stack direction="row" alignItems="center" spacing={2}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: "bold", minWidth: 28, textAlign: "right" }}>
-                      {idx + 1}.
+                    <Typography variant="subtitle1" sx={{ fontWeight: "bold", minWidth: 36, textAlign: "right" }}>
+                      {globalIndex}.
                     </Typography>
 
                     {ep.image_url ? (
@@ -205,6 +252,12 @@ export default function PodcastDetailsPage() {
                         <Typography variant="subtitle1" sx={{ fontWeight: 600, ...clampLines(1), flex: 1, minWidth: 0 }}>
                           {ep.title || "Untitled episode"}
                         </Typography>
+
+                        {/* NEW badge */}
+                        {ep.is_new && (
+                          <Chip size="small" color="primary" label="NEW" sx={{ ml: 0.5 }} />
+                        )}
+
                         <Chip
                           size="small"
                           label={status}
@@ -218,7 +271,6 @@ export default function PodcastDetailsPage() {
                         {fmtDate(ep.pub_date)} • {fmtDuration(ep.duration_seconds)}
                       </Typography>
 
-                      {/* CHANGED: show plain-text metadata summary (from backend meta_summary) */}
                       {ep.meta_summary && (
                         <Typography variant="body2" sx={{ mt: 0.75, ...clampLines(3) }}>
                           {ep.meta_summary}
@@ -254,6 +306,16 @@ export default function PodcastDetailsPage() {
         </List>
       </Paper>
 
+      {/* Load more */}
+      {page < totalPages && (
+        <Box sx={{ textAlign: "center", mt: 2 }}>
+          <Button variant="outlined" onClick={handleLoadMore} disabled={loading}>
+            {loading ? "Loading…" : "Load more"}
+          </Button>
+        </Box>
+      )}
+
+      {/* Dialog */}
       <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
         <DialogTitle>{dialogTitle}</DialogTitle>
         <DialogContent dividers>
