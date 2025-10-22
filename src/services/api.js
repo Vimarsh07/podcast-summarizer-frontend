@@ -163,4 +163,18 @@ export async function getMetadataPreview(episode_id) {
   return res.json();
 }
 
+// POST /episodes/{id}/transcription/reset
+export async function resetEpisodeTranscription(episodeId, clearOutputs = false) {
+  const res = await fetch(
+    `/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to reset transcription");
+  }
+  return res.json();
+}
+
+
 export { API_ROOT };
