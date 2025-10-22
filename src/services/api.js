@@ -164,17 +164,43 @@ export async function getMetadataPreview(episode_id) {
 }
 
 // POST /episodes/{id}/transcription/reset
-export async function resetEpisodeTranscription(episodeId, clearOutputs = false) {
-  const res = await fetch(
-    `/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`,
-    { method: "POST" }
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to reset transcription");
+export async function resetEpisodeTranscription(episodeId, clearOutputs = false, { withCredentials = false, timeoutMs = 15000 } = {}) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(
+      `/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`,
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        credentials: withCredentials ? "include" : "same-origin", // if you use session cookies, pass withCredentials=true
+        signal: ctrl.signal,
+      }
+    );
+
+    if (!res.ok) {
+      // Try JSON error, else text, else generic
+      let msg = "Failed to reset transcription";
+      try {
+        const data = await res.json();
+        msg = data?.detail || JSON.stringify(data);
+      } catch {
+        try {
+          msg = await res.text();
+        } catch {}
+      }
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+
+    // In case the server ever returns 204
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  } finally {
+    clearTimeout(t);
   }
-  return res.json();
 }
+
 
 
 export { API_ROOT };
