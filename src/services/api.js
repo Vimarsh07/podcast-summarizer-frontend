@@ -169,8 +169,7 @@ export async function resetEpisodeTranscription(episodeId, clearOutputs = false,
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
-    const res = await fetch(
-      `/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`,
+    const res = await fetch(`${API_ROOT}/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`,
       {
         method: "POST",
         headers: { Accept: "application/json" },

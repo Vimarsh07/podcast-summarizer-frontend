@@ -89,6 +89,8 @@ export default function PodcastDetailsPage() {
   const [dialogContent, setDialogContent] = useState("");
   const [dialogLoading, setDialogLoading] = useState(false);
 
+  const [cancelingId, setCancelingId] = useState(null);
+
   // polling (merge status only)
   const pollTimer = useRef(null);
   const startPoll = useCallback(() => {
@@ -205,24 +207,40 @@ export default function PodcastDetailsPage() {
       !window.confirm("Stop current transcription and reset to NOT_REQUESTED?")
     )
       return;
+
+    console.log("🛑 [Cancel] start", { id: ep.id });
+    setCancelingId(ep.id);
+
     try {
-      // Optimistically update UI
+      const res = await resetEpisodeTranscription(ep.id, true); // clear_outputs=true
+      console.log("✅ [Cancel] API success", res);
+
+      // Only update UI *AFTER* server confirms
       setEpisodes((list) =>
         list.map((x) =>
-          x.id === ep.id ? { ...x, transcript_status: "NOT_REQUESTED" } : x
+          x.id === ep.id
+            ? {
+                ...x,
+                transcript_status: (res.transcript_status || "").toUpperCase(),
+              }
+            : x
         )
       );
 
-      await resetEpisodeTranscription(ep.id, true); // clear_outputs=true wipes transcript/summary
-
-      // Optional: stop polling immediately if running
+      // stop polling (optional)
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
+        console.log("🧭 [Cancel] polling stopped");
       }
     } catch (e) {
-      alert(e.message);
-      await loadEpisodes(page, { replace: false }); // reload actual status from server
+      console.error("💥 [Cancel] API error:", e);
+      alert(e.message || "Failed to cancel transcription");
+      // Pull server truth to undo any stale UI
+      await loadEpisodes(page, { replace: true });
+    } finally {
+      setCancelingId(null);
+      console.log("🧩 [Cancel] end", { id: ep.id });
     }
   }
 
@@ -428,7 +446,14 @@ export default function PodcastDetailsPage() {
                         variant="outlined"
                         color="error"
                         onClick={() => handleCancelTranscription(ep)}
+                        disabled={cancelingId === ep.id}
+                        startIcon={
+                          cancelingId === ep.id ? (
+                            <CircularProgress size={14} />
+                          ) : null
+                        }
                       >
+                        {cancelingId === ep.id ? "Cancelling…" : "Cancel"}
                         Cancel
                       </Button>
                     )}
