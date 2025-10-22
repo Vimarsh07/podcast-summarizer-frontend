@@ -28,6 +28,7 @@ import {
   transcribeAndSummarizeEpisode, // POST transcribe
   getEpisodeDetail, // fetch full (summary + transcript) — also clears is_new server-side
   resetEpisodeTranscription,
+  resummarizeEpisode 
 } from "../services/api";
 
 // ---------- helpers (missing earlier—added back) ----------
@@ -90,6 +91,7 @@ export default function PodcastDetailsPage() {
   const [dialogLoading, setDialogLoading] = useState(false);
 
   const [cancelingId, setCancelingId] = useState(null);
+  const [resummarizingId, setResummarizingId] = useState(null);
 
   // polling (merge status only)
   const pollTimer = useRef(null);
@@ -243,6 +245,24 @@ export default function PodcastDetailsPage() {
       console.log("🧩 [Cancel] end", { id: ep.id });
     }
   }
+
+  async function handleResummarize(ep) {
+  if (!window.confirm("Re-generate the summary from the existing transcript?")) return;
+  setResummarizingId(ep.id);
+  try {
+    await resummarizeEpisode(ep.id, { summary_words: 900 });
+    // Option A: Immediately fetch the new summary dialog
+    const full = await getEpisodeDetail(ep.id);
+    setDialogTitle("Summary");
+    setDialogContent(full.summary || "(empty)");
+    setOpen(true);
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    setResummarizingId(null);
+  }
+}
+
 
   async function openSummary(ep) {
     setDialogTitle("Summary");
@@ -454,7 +474,26 @@ export default function PodcastDetailsPage() {
                         }
                       >
                         {cancelingId === ep.id ? "Cancelling…" : "Cancel"}
-                        Cancel
+                        
+                      </Button>
+                    )}
+
+                    {/* Re-summarize when completed */}
+                    {done && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => handleResummarize(ep)}
+                        startIcon={
+                          resummarizingId === ep.id ? (
+                            <CircularProgress size={14} />
+                          ) : null
+                        }
+                        disabled={resummarizingId === ep.id}
+                      >
+                        {resummarizingId === ep.id
+                          ? "Re-summarizing…"
+                          : "Re-Summarize"}
                       </Button>
                     )}
 

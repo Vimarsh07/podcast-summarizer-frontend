@@ -200,6 +200,18 @@ export async function resetEpisodeTranscription(episodeId, clearOutputs = false,
   }
 }
 
+export async function resummarizeEpisode(episodeId, { summary_words = 800 } = {}) {
+  const url = `/episodes/${episodeId}/resummarize?summary_words=${summary_words}`;
+  const res = await fetch(url, { method: "POST", headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    let msg = "Failed to re-summarize";
+    try { msg = (await res.json())?.detail || msg; } catch {}
+    throw new Error(`${msg} (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+
 
 
 export { API_ROOT };
