@@ -1,5 +1,4 @@
-// src/App.js
-
+// ============================== src/App.js ==============================
 import React from "react";
 import {
   Routes,
@@ -29,6 +28,15 @@ import HomePage from "./pages/HomePage";
 // Toaster
 import AppToaster from "./components/Toaster";
 import toast from "react-hot-toast";
+
+/**
+ * Wrapper for "/" that shows the public Home when logged out,
+ * and redirects to /podcasts if the user is already authenticated.
+ */
+function RootRoute() {
+  const hasToken = !!localStorage.getItem("access_token");
+  return hasToken ? <Navigate to="/podcasts" replace /> : <HomePage />;
+}
 
 export default function App() {
   const location = useLocation();
@@ -81,8 +89,8 @@ export default function App() {
 
       <Box sx={{ p: 2 }}>
         <Routes>
-          {/* Public landing page */}
-          <Route path="/" element={<HomePage />} />
+          {/* Public landing or redirect to /podcasts if already logged in */}
+          <Route path="/" element={<RootRoute />} />
 
           {/* Protected routes */}
           <Route
@@ -94,13 +102,13 @@ export default function App() {
             }
           />
           <Route
-  path="/podcasts/:podcastId"
-  element={
-    <ProtectedRoute>
-      <PodcastsDetailsPage />
-    </ProtectedRoute>
-  }
-/>
+            path="/podcasts/:podcastId"
+            element={
+              <ProtectedRoute>
+                <PodcastsDetailsPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Auth */}
           <Route path="/login" element={<LoginPage />} />

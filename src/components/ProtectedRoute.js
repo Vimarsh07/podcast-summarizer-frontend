@@ -1,19 +1,22 @@
-import React from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+// ========================== src/components/ProtectedRoute.jsx ==========================
+import React from "react";
+import { Navigate, useLocation } from "react-router-dom";
 
 /**
- * Protects routes by redirecting unauthenticated users to /login.
- * Checks for a JWT stored in localStorage under 'access_token'.
+ * Protects private routes by verifying if a user is authenticated.
+ * Checks for JWT stored in localStorage under 'access_token'.
+ * If not authenticated, redirects to /login and preserves the intended route
+ * for post-login navigation.
  */
 export default function ProtectedRoute({ children }) {
   const location = useLocation();
-  const token = localStorage.getItem('access_token');
+  const token = localStorage.getItem("access_token");
 
+  // If no token, redirect to login with saved location (for post-login redirect)
   if (!token) {
-    // Redirect to login page, save current location for post-login redirect
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If token exists, render the protected child component
+  // If token exists, render the protected content
   return children;
 }

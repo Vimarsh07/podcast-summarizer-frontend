@@ -13,6 +13,18 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePassword = (password) => {
+    // Must be at least 8 characters, contain uppercase, lowercase, number, and special character
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
+    return passwordRegex.test(password);
+  };
+
   const handleSignup = async (e) => {
     e.preventDefault();
     if (loading) return;
@@ -21,6 +33,19 @@ export default function SignupPage() {
       toast.error("Please enter an email.");
       return;
     }
+
+    if (!validateEmail(email)) {
+      toast.error("Please enter a valid email address.");
+      return;
+    }
+
+    if (!validatePassword(password)) {
+      toast.error(
+        "Password must be at least 8 characters and include an uppercase, lowercase, number, and special character."
+      );
+      return;
+    }
+
     if (password !== confirm) {
       toast.error("Passwords do not match.");
       return;
@@ -63,6 +88,7 @@ export default function SignupPage() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
+          helperText="Minimum 8 characters, with uppercase, lowercase, number, and special character."
         />
         <TextField
           label="Confirm Password"

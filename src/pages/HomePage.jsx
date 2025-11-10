@@ -24,6 +24,11 @@ export default function HomePage() {
   const navigate = useNavigate();
   const isAuthed = !!localStorage.getItem("access_token");
 
+  // ✅ Optional: if already logged in, auto-redirect Home -> /podcasts
+  React.useEffect(() => {
+    if (isAuthed) navigate("/podcasts", { replace: true });
+  }, [isAuthed, navigate]);
+
   return (
     <Box sx={{ pb: 8 }}>
       {/* Hero */}
@@ -43,20 +48,27 @@ export default function HomePage() {
               variant="filled"
               sx={{ fontWeight: 600 }}
             />
+            <Chip
+  label="Supports audio podcasts only"
+  color="secondary"
+  variant="outlined"
+  sx={{ fontWeight: 500 }}
+/>
             <Typography variant="h3" fontWeight={800}>
-              Turn long podcasts into crisp, actionable summaries
-            </Typography>
-            <Typography variant="h6" color="text.secondary" sx={{ maxWidth: 800 }}>
-              Paste a podcast’s RSS feed, pick an episode, and let the app
-              transcribe + summarize into structured insights you can skim
-              in minutes.
-            </Typography>
+  Turn long <u>audio podcasts</u> into crisp, actionable summaries
+</Typography>
+
+           <Typography variant="h6" color="text.secondary" sx={{ maxWidth: 800 }}>
+  Paste a podcast’s RSS feed, pick an <strong>audio episode</strong>, and let the app
+  transcribe + summarize it into structured insights you can skim in minutes.
+</Typography>
+
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               {isAuthed ? (
                 <Button
                   variant="contained"
                   size="large"
-                  onClick={() => navigate("/")}
+                  onClick={() => navigate("/podcasts")}  // ⬅️ changed
                 >
                   Go to My Podcasts
                 </Button>
@@ -96,7 +108,7 @@ export default function HomePage() {
                   What the app does
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
-                  It ingests podcast episodes from their RSS feed, performs
+                  It ingests <strong>audio podcast episodes</strong> from their RSS feed, performs
                   high-accuracy speech-to-text, and generates structured
                   summaries with <strong>Overview</strong>,{" "}
                   <strong>Key Takeaways</strong>,{" "}
@@ -118,6 +130,9 @@ export default function HomePage() {
                   Busy learners, researchers, content creators, and teams
                   who need <em>fast</em> comprehension of long audio. Great for
                   staying on top of trends without spending hours listening.
+
+                  Ideal for people who prefer listening to audio content but need quick summaries later.
+
                 </Typography>
               </Stack>
             </Paper>
@@ -197,7 +212,7 @@ export default function HomePage() {
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ pt: 1 }}>
               {isAuthed ? (
-                <Button variant="contained" onClick={() => navigate("/")}>
+                <Button variant="contained" onClick={() => navigate("/podcasts")}>  {/* ⬅️ changed */}
                   Go to My Podcasts
                 </Button>
               ) : (
