@@ -1,38 +1,48 @@
 // src/components/SignupPage.js
-import React, { useState } from 'react';
-import {
-  Box, TextField, Button, Typography, Paper
-} from '@mui/material';
-import { useNavigate } from 'react-router-dom';
-import { signupUser } from '../services/api';   // ← import your API helper
+import React, { useState } from "react";
+import { Box, TextField, Button, Typography, Paper } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { signupUser } from "../services/api";
+import { humanizeApiError } from "../services/errorMap";
 
 export default function SignupPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSignup = async e => {
+  const handleSignup = async (e) => {
     e.preventDefault();
+    if (loading) return;
+
+    if (!email.trim()) {
+      toast.error("Please enter an email.");
+      return;
+    }
     if (password !== confirm) {
-      alert('Passwords do not match');
+      toast.error("Passwords do not match.");
       return;
     }
 
+    setLoading(true);
     try {
-      // call your backend
       await signupUser({ email, password });
-      // on success, go to login
-      navigate('/login', { replace: true });
+      toast.success("Account created! Please log in.");
+      navigate("/login", { replace: true });
     } catch (err) {
-      // show any error returned by the API
-      alert('Signup failed: ' + err.message);
+      toast.error(humanizeApiError(err, "Signup failed. Please try again."));
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <Paper sx={{ p: 4, maxWidth: 400, mx: 'auto', mt: 8 }}>
-      <Typography variant="h5" gutterBottom>Sign Up</Typography>
+    <Paper sx={{ p: 4, maxWidth: 400, mx: "auto", mt: 8 }}>
+      <Typography variant="h5" gutterBottom>
+        Sign Up
+      </Typography>
       <Box component="form" onSubmit={handleSignup} noValidate>
         <TextField
           label="Email"
@@ -41,7 +51,8 @@ export default function SignupPage() {
           required
           margin="normal"
           value={email}
-          onChange={e => setEmail(e.target.value)}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email"
         />
         <TextField
           label="Password"
@@ -50,7 +61,8 @@ export default function SignupPage() {
           required
           margin="normal"
           value={password}
-          onChange={e => setPassword(e.target.value)}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="new-password"
         />
         <TextField
           label="Confirm Password"
@@ -59,10 +71,17 @@ export default function SignupPage() {
           required
           margin="normal"
           value={confirm}
-          onChange={e => setConfirm(e.target.value)}
+          onChange={(e) => setConfirm(e.target.value)}
+          autoComplete="new-password"
         />
-        <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }}>
-          Sign Up
+        <Button
+          type="submit"
+          variant="contained"
+          fullWidth
+          sx={{ mt: 2 }}
+          disabled={loading}
+        >
+          {loading ? "Creating account…" : "Sign Up"}
         </Button>
       </Box>
     </Paper>

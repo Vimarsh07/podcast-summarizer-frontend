@@ -18,20 +18,21 @@ import {
   Stack,
   Chip,
   Avatar,
-  Tooltip,
   CircularProgress,
 } from "@mui/material";
+import toast from "react-hot-toast";
 import {
   getPodcast,
-  fetchEpisodes, // now returns { items, page, page_size, total, total_pages }
+  fetchEpisodes, // returns { items, page, page_size, total, total_pages }
   fetchLatestMetadata, // queues metadata ingest
   transcribeAndSummarizeEpisode, // POST transcribe
   getEpisodeDetail, // fetch full (summary + transcript) — also clears is_new server-side
   resetEpisodeTranscription,
-  resummarizeEpisode 
+  resummarizeEpisode,
 } from "../services/api";
+import { humanizeApiError } from "../services/errorMap";
 
-// ---------- helpers (missing earlier—added back) ----------
+// ---------- helpers ----------
 function fmtDate(d) {
   if (!d) return "—";
   try {
@@ -100,8 +101,7 @@ export default function PodcastDetailsPage() {
     pollTimer.current = setInterval(async () => {
       try {
         const fresh = await fetchEpisodes(podcastId, { page: 1, pageSize });
-        const freshItems = fresh.items || fresh; // guard if API temporarily returns array
-        // merge transcript_status for any items we already have
+        const freshItems = fresh.items || fresh;
         setEpisodes((prev) => {
           const byId = new Map(prev.map((e) => [e.id, e]));
           for (const e of freshItems) {
@@ -120,11 +120,13 @@ export default function PodcastDetailsPage() {
             (e.transcript_status || "").toUpperCase()
           )
         );
-        if (!stillRunning) {
+        if (!stillRunning && pollTimer.current) {
           clearInterval(pollTimer.current);
           pollTimer.current = null;
         }
-      } catch {}
+      } catch (err) {
+        // don’t spam toasts while polling; fail silently
+      }
     }, 3000);
   }, [podcastId, pageSize]);
 
@@ -140,7 +142,7 @@ export default function PodcastDetailsPage() {
     try {
       setPodcast(await getPodcast(podcastId));
     } catch (e) {
-      alert(e.message);
+      toast.error(humanizeApiError(e, "Failed to load podcast."));
     }
   }, [podcastId]);
 
@@ -149,7 +151,7 @@ export default function PodcastDetailsPage() {
       setLoading(true);
       try {
         const data = await fetchEpisodes(podcastId, { page: p, pageSize });
-        const items = data.items || data; // guard for old shape
+        const items = data.items || data;
         if (replace) {
           setEpisodes(items);
         } else {
@@ -161,7 +163,7 @@ export default function PodcastDetailsPage() {
         setPage(data.page ?? p);
         setTotalPages(data.total_pages ?? 1);
       } catch (e) {
-        alert(e.message);
+        toast.error(humanizeApiError(e, "Failed to load episodes."));
       } finally {
         setLoading(false);
       }
@@ -178,9 +180,10 @@ export default function PodcastDetailsPage() {
     setLoading(true);
     try {
       await fetchLatestMetadata(podcastId, 10);
+      toast.success("Feed refresh queued.");
       await loadEpisodes(1, { replace: true });
     } catch (e) {
-      alert(e.message);
+      toast.error(humanizeApiError(e, "Could not refresh the feed."));
     } finally {
       setLoading(false);
     }
@@ -197,27 +200,25 @@ export default function PodcastDetailsPage() {
         summary_words: 900,
         force: false,
       });
+      toast.success("Transcription queued. This may take a bit.");
       startPoll();
     } catch (e) {
-      alert(e.message);
+      toast.error(humanizeApiError(e, "Failed to start transcription."));
       loadEpisodes(page, { replace: false });
     }
   }
 
   async function handleCancelTranscription(ep) {
-    if (
-      !window.confirm("Stop current transcription and reset to NOT_REQUESTED?")
-    )
-      return;
+    const ok = window.confirm(
+      "Stop current transcription and reset to NOT_REQUESTED?"
+    );
+    if (!ok) return;
 
-    console.log("🛑 [Cancel] start", { id: ep.id });
     setCancelingId(ep.id);
 
     try {
       const res = await resetEpisodeTranscription(ep.id, true); // clear_outputs=true
-      console.log("✅ [Cancel] API success", res);
-
-      // Only update UI *AFTER* server confirms
+      toast.success("Transcription reset.");
       setEpisodes((list) =>
         list.map((x) =>
           x.id === ep.id
@@ -228,41 +229,38 @@ export default function PodcastDetailsPage() {
             : x
         )
       );
-
-      // stop polling (optional)
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
-        console.log("🧭 [Cancel] polling stopped");
       }
     } catch (e) {
-      console.error("💥 [Cancel] API error:", e);
-      alert(e.message || "Failed to cancel transcription");
-      // Pull server truth to undo any stale UI
+      toast.error(humanizeApiError(e, "Failed to cancel transcription."));
       await loadEpisodes(page, { replace: true });
     } finally {
       setCancelingId(null);
-      console.log("🧩 [Cancel] end", { id: ep.id });
     }
   }
 
   async function handleResummarize(ep) {
-  if (!window.confirm("Re-generate the summary from the existing transcript?")) return;
-  setResummarizingId(ep.id);
-  try {
-    await resummarizeEpisode(ep.id, { summary_words: 900 });
-    // Option A: Immediately fetch the new summary dialog
-    const full = await getEpisodeDetail(ep.id);
-    setDialogTitle("Summary");
-    setDialogContent(full.summary || "(empty)");
-    setOpen(true);
-  } catch (e) {
-    alert(e.message);
-  } finally {
-    setResummarizingId(null);
-  }
-}
+    const ok = window.confirm(
+      "Re-generate the summary from the existing transcript?"
+    );
+    if (!ok) return;
 
+    setResummarizingId(ep.id);
+    try {
+      await resummarizeEpisode(ep.id, { summary_words: 900 });
+      toast.success("Summary re-generated.");
+      const full = await getEpisodeDetail(ep.id);
+      setDialogTitle("Summary");
+      setDialogContent(full.summary || "(empty)");
+      setOpen(true);
+    } catch (e) {
+      toast.error(humanizeApiError(e, "Failed to re-summarize."));
+    } finally {
+      setResummarizingId(null);
+    }
+  }
 
   async function openSummary(ep) {
     setDialogTitle("Summary");
@@ -272,12 +270,13 @@ export default function PodcastDetailsPage() {
     try {
       const full = await getEpisodeDetail(ep.id);
       setDialogContent(full.summary || "(empty)");
-      // reflect server-side is_new clearing
       setEpisodes((list) =>
         list.map((x) => (x.id === ep.id ? { ...x, is_new: false } : x))
       );
     } catch (e) {
-      setDialogContent(e.message || "Failed to load summary.");
+      const msg = humanizeApiError(e, "Failed to load summary.");
+      setDialogContent(msg);
+      toast.error(msg);
     } finally {
       setDialogLoading(false);
     }
@@ -295,7 +294,9 @@ export default function PodcastDetailsPage() {
         list.map((x) => (x.id === ep.id ? { ...x, is_new: false } : x))
       );
     } catch (e) {
-      setDialogContent(e.message || "Failed to load transcript.");
+      const msg = humanizeApiError(e, "Failed to load transcript.");
+      setDialogContent(msg);
+      toast.error(msg);
     } finally {
       setDialogLoading(false);
     }
@@ -327,11 +328,7 @@ export default function PodcastDetailsPage() {
       </Typography>
 
       <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center">
-        <Button
-          variant="contained"
-          onClick={handleFetchLatest}
-          disabled={loading}
-        >
+        <Button variant="contained" onClick={handleFetchLatest} disabled={loading}>
           {loading ? "Loading…" : "Fetch Latest Metadata"}
         </Button>
         <Typography variant="body2" color="text.secondary">
@@ -348,9 +345,7 @@ export default function PodcastDetailsPage() {
           )}
 
           {episodes.map((ep, idx) => {
-            const status = (
-              ep.transcript_status || "NOT_REQUESTED"
-            ).toUpperCase();
+            const status = (ep.transcript_status || "NOT_REQUESTED").toUpperCase();
             const done = status === "COMPLETED";
             const working = ["QUEUED", "TRANSCRIBING"].includes(status);
             const globalIndex = (page - 1) * pageSize + idx + 1;
@@ -365,22 +360,13 @@ export default function PodcastDetailsPage() {
                   <Stack direction="row" alignItems="center" spacing={2}>
                     <Typography
                       variant="subtitle1"
-                      sx={{
-                        fontWeight: "bold",
-                        minWidth: 36,
-                        textAlign: "right",
-                      }}
+                      sx={{ fontWeight: "bold", minWidth: 36, textAlign: "right" }}
                     >
                       {globalIndex}.
                     </Typography>
 
                     {ep.image_url ? (
-                      <Avatar
-                        variant="rounded"
-                        src={ep.image_url}
-                        alt={ep.title}
-                        sx={{ width: 56, height: 56 }}
-                      />
+                      <Avatar variant="rounded" src={ep.image_url} alt={ep.title} sx={{ width: 56, height: 56 }} />
                     ) : (
                       <Avatar variant="rounded" sx={{ width: 56, height: 56 }}>
                         {ep.title ? ep.title.charAt(0) : "E"}
@@ -391,51 +377,29 @@ export default function PodcastDetailsPage() {
                       <Stack direction="row" alignItems="center" spacing={1}>
                         <Typography
                           variant="subtitle1"
-                          sx={{
-                            fontWeight: 600,
-                            ...clampLines(1),
-                            flex: 1,
-                            minWidth: 0,
-                          }}
+                          sx={{ fontWeight: 600, ...clampLines(1), flex: 1, minWidth: 0 }}
                         >
                           {ep.title || "Untitled episode"}
                         </Typography>
 
                         {/* NEW badge */}
-                        {ep.is_new && (
-                          <Chip
-                            size="small"
-                            color="primary"
-                            label="NEW"
-                            sx={{ ml: 0.5 }}
-                          />
-                        )}
+                        {ep.is_new && <Chip size="small" color="primary" label="NEW" sx={{ ml: 0.5 }} />}
 
                         <Chip
                           size="small"
                           label={status}
                           color={statusColor(status)}
-                          variant={
-                            status === "NOT_REQUESTED" ? "outlined" : "filled"
-                          }
+                          variant={status === "NOT_REQUESTED" ? "outlined" : "filled"}
                           sx={{ ml: 1, flexShrink: 0 }}
                         />
                       </Stack>
 
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ mt: 0.25 }}
-                      >
-                        {fmtDate(ep.pub_date)} •{" "}
-                        {fmtDuration(ep.duration_seconds)}
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                        {fmtDate(ep.pub_date)} • {fmtDuration(ep.duration_seconds)}
                       </Typography>
 
                       {ep.meta_summary && (
-                        <Typography
-                          variant="body2"
-                          sx={{ mt: 0.75, ...clampLines(3) }}
-                        >
+                        <Typography variant="body2" sx={{ mt: 0.75, ...clampLines(3) }}>
                           {ep.meta_summary}
                         </Typography>
                       )}
@@ -443,23 +407,16 @@ export default function PodcastDetailsPage() {
                   </Stack>
 
                   {/* Actions */}
-                  <Stack
-                    direction="row"
-                    spacing={2}
-                    sx={{ mt: 1, flexWrap: "wrap" }}
-                  >
+                  <Stack direction="row" spacing={2} sx={{ mt: 1, flexWrap: "wrap" }}>
                     <Button
                       size="small"
                       variant="contained"
                       onClick={() => handleTranscribe(ep)}
                       disabled={working || done}
                     >
-                      {working
-                        ? "Processing…"
-                        : done
-                        ? "Completed"
-                        : "Transcribe & Summarize"}
+                      {working ? "Processing…" : done ? "Completed" : "Transcribe & Summarize"}
                     </Button>
+
                     {working && (
                       <Button
                         size="small"
@@ -467,14 +424,9 @@ export default function PodcastDetailsPage() {
                         color="error"
                         onClick={() => handleCancelTranscription(ep)}
                         disabled={cancelingId === ep.id}
-                        startIcon={
-                          cancelingId === ep.id ? (
-                            <CircularProgress size={14} />
-                          ) : null
-                        }
+                        startIcon={cancelingId === ep.id ? <CircularProgress size={14} /> : null}
                       >
                         {cancelingId === ep.id ? "Cancelling…" : "Cancel"}
-                        
                       </Button>
                     )}
 
@@ -484,32 +436,18 @@ export default function PodcastDetailsPage() {
                         size="small"
                         variant="outlined"
                         onClick={() => handleResummarize(ep)}
-                        startIcon={
-                          resummarizingId === ep.id ? (
-                            <CircularProgress size={14} />
-                          ) : null
-                        }
+                        startIcon={resummarizingId === ep.id ? <CircularProgress size={14} /> : null}
                         disabled={resummarizingId === ep.id}
                       >
-                        {resummarizingId === ep.id
-                          ? "Re-summarizing…"
-                          : "Re-Summarize"}
+                        {resummarizingId === ep.id ? "Re-summarizing…" : "Re-Summarize"}
                       </Button>
                     )}
 
-                    <Button
-                      size="small"
-                      disabled={!done}
-                      onClick={() => openSummary(ep)}
-                    >
+                    <Button size="small" disabled={!done} onClick={() => openSummary(ep)}>
                       View Summary
                     </Button>
 
-                    <Button
-                      size="small"
-                      disabled={!done}
-                      onClick={() => openTranscript(ep)}
-                    >
+                    <Button size="small" disabled={!done} onClick={() => openTranscript(ep)}>
                       View Transcript
                     </Button>
                   </Stack>
@@ -524,11 +462,7 @@ export default function PodcastDetailsPage() {
       {/* Load more */}
       {page < totalPages && (
         <Box sx={{ textAlign: "center", mt: 2 }}>
-          <Button
-            variant="outlined"
-            onClick={handleLoadMore}
-            disabled={loading}
-          >
+          <Button variant="outlined" onClick={handleLoadMore} disabled={loading}>
             {loading ? "Loading…" : "Load more"}
           </Button>
         </Box>

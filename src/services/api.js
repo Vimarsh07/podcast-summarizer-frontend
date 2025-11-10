@@ -1,217 +1,164 @@
 // ======================== api.js ========================
-const API_ROOT = process.env.REACT_APP_API_URL || "";
+/**
+ * Unified API client that:
+ *  - injects Bearer token
+ *  - parses { error: { code, message, details } }
+ *  - throws ApiError(status, code, message, details)
+ *  - auto-logs out on 401
+ */
+export const API_ROOT = process.env.REACT_APP_API_URL || "";
 
-// ---- auth ---------------------------------------------------
+export class ApiError extends Error {
+  constructor({ status, code = "HTTP_ERROR", message = "Request failed", details = {} }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function authHeader() {
+  const t = localStorage.getItem("access_token");
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+function onUnauthorized() {
+  localStorage.removeItem("access_token");
+  if (window.location.pathname !== "/login") {
+    window.location.replace("/login");
+  }
+}
+
+async function handleResponse(res) {
+  const status = res.status;
+  const ct = res.headers.get("content-type") || "";
+  const isJson = ct.includes("application/json");
+  const body = isJson ? await res.json().catch(() => ({})) : await res.text().catch(() => "");
+
+  if (status >= 200 && status < 300) {
+    return isJson ? body : { ok: true, body };
+  }
+
+  // Expect { error: { code, message, details } }
+  let code, message, details;
+  if (isJson && body && body.error) {
+    ({ code, message, details } = body.error);
+  } else if (isJson && body && body.detail) {
+    // FastAPI sometimes returns {"detail": "..."} — normalize
+    code = "HTTP_ERROR";
+    message = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+  } else {
+    code = "HTTP_ERROR";
+    message = typeof body === "string" && body.trim() ? body : `Request failed (${status})`;
+  }
+
+  if (status === 401) onUnauthorized();
+  throw new ApiError({ status, code, message, details });
+}
+
+async function request(path, { method = "GET", headers = {}, body, timeoutMs } = {}) {
+  const ctrl = new AbortController();
+  const timer = timeoutMs ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+
+  try {
+    const res = await fetch(`${API_ROOT}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeader(),
+        ...headers,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+      // credentials: "include", // enable if you move to httpOnly cookies
+    });
+    return await handleResponse(res);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export function formatApiError(err, fallback = "Something went wrong. Please try again.") {
+  if (err instanceof ApiError) return err.message || fallback;
+  if (err && typeof err.message === "string") return err.message;
+  return fallback;
+}
+
+// ---------- AUTH ----------
 export async function loginUser({ email, password }) {
-  const res = await fetch(`${API_ROOT}/login`, {
+  return request("/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    // FastAPI OAuth2 expects "username"
-    body: JSON.stringify({ username: email, password }),
+    body: { username: email, password }, // FastAPI OAuth2 expects "username"
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json(); // { access_token, token_type }
 }
 
 export async function signupUser({ email, password }) {
-  const res = await fetch(`${API_ROOT}/signup`, {
+  return request("/signup", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: { email, password },
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
 }
 
-// ---- helpers ------------------------------------------------
-function authHeaders() {
-  const token = localStorage.getItem("access_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-// ---- podcasts -----------------------------------------------
+// ---------- PODCASTS ----------
 export async function fetchSubscriptions() {
-  const res = await fetch(`${API_ROOT}/podcasts`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request("/podcasts");
 }
 
 export async function getPodcast(podcast_id) {
-  const res = await fetch(`${API_ROOT}/podcasts/${podcast_id}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request(`/podcasts/${podcast_id}`);
 }
 
 export async function subscribePodcast(title, feed_url) {
-  const res = await fetch(`${API_ROOT}/podcasts`, {
+  return request("/podcasts", {
     method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ title, feed_url }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  // returns { podcast_id, status }
-  return res.json();
+    body: { title, feed_url },
+  }); // { podcast_id, status }
 }
 
 export async function unsubscribePodcast(podcast_id) {
-  const res = await fetch(`${API_ROOT}/podcasts/${podcast_id}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(await res.text());
+  await request(`/podcasts/${podcast_id}`, { method: "DELETE" });
   return true;
 }
 
-// ---- episodes -----------------------------------------------
-
-/**
- * Selection payload for a podcast's episodes.
- * Backend: GET /episodes/{podcast_id}
- * Returns array of:
- * { id, title, pub_date, duration_seconds, image_url,
- *   has_summary_html, has_transcript_html, transcript_status, transcript_origin }
- */
+// ---------- EPISODES ----------
 export async function fetchEpisodes(podcast_id, { page = 1, pageSize = 20 } = {}) {
-  const url = new URL(`${API_ROOT}/episodes/${podcast_id}`);
-  url.search = new URLSearchParams({
-    page: String(page),
-    page_size: String(pageSize),
-  }).toString();
-
-  const res = await fetch(url.toString(), { headers: authHeaders() });
-  if (!res.ok) throw new Error(await res.text());
-  const data = await res.json();
-
-  // Normalize just in case your backend still returns an array somewhere.
-  // After you fully switch the backend, this guard is harmless.
+  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) }).toString();
+  const data = await request(`/episodes/${podcast_id}?${qs}`);
+  // Normalization guard (if an older backend returns an array)
   if (Array.isArray(data)) {
-    return {
-      items: data,
-      page,
-      page_size: pageSize,
-      total: data.length,
-      total_pages: 1,
-    };
+    return { items: data, page, page_size: pageSize, total: data.length, total_pages: 1 };
   }
-
-  return data; // { items, page, page_size, total, total_pages }
+  return data;
 }
 
-/**
- * Queue metadata-only refresh for latest N episodes.
- * Backend: POST /podcasts/{podcast_id}/fetch-latest?limit=10
- * Returns: { status: "queued", limit }
- */
 export async function fetchLatestMetadata(podcast_id, limit = 10) {
-  const url = new URL(`${API_ROOT}/podcasts/${podcast_id}/fetch-latest`, window.location.origin);
-  if (limit) url.searchParams.set("limit", String(limit));
-
-  const res = await fetch(url.toString().replace(window.location.origin, ""), {
-    method: "POST",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const qs = limit ? `?limit=${encodeURIComponent(String(limit))}` : "";
+  return request(`/podcasts/${podcast_id}/fetch-latest${qs}`, { method: "POST" });
 }
 
-/**
- * Trigger on-demand transcription + summary for a chosen episode.
- * Backend: POST /episodes/{episode_id}/transcribe-and-summarize
- * Body: { summary_words, force }
- * Returns: { message: "Queued", episode_id }
- */
-export async function transcribeAndSummarizeEpisode(
-  episode_id,
-  { summary_words = 800, force = false } = {}
-) {
-  const res = await fetch(`${API_ROOT}/episodes/${episode_id}/transcribe-and-summarize`, {
+export async function transcribeAndSummarizeEpisode(episode_id, { summary_words = 800, force = false } = {}) {
+  return request(`/episodes/${episode_id}/transcribe-and-summarize`, {
     method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ summary_words, force }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+    body: { summary_words, force },
+  }); // { message, episode_id }
 }
 
-/**
- * Fetch full episode details (summary + transcript) on demand for dialogs.
- * Backend (add in main.py if not present):
- *   GET /episodes/{episode_id}/detail
- * Returns: { id, summary, transcript, transcript_status, transcript_origin }
- */
 export async function getEpisodeDetail(episode_id) {
-  const res = await fetch(`${API_ROOT}/episodes/${episode_id}/detail`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request(`/episodes/${episode_id}/detail`);
 }
 
-/**
- * Optional: preview stripped RSS metadata (summary_plain + transcript_html preview).
- * Backend (optional route in main.py):
- *   GET /episodes/{episode_id}/metadata-preview
- * Returns: { episode_id, summary_plain, has_transcript_html, transcript_html_preview? }
- */
-export async function getMetadataPreview(episode_id) {
-  const res = await fetch(`${API_ROOT}/episodes/${episode_id}/metadata-preview`, {
-    headers: authHeaders(),
+export async function resetEpisodeTranscription(episodeId, clearOutputs = false, { timeoutMs = 15000 } = {}) {
+  return request(`/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`, {
+    method: "POST",
+    timeoutMs,
+    headers: { Accept: "application/json" },
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-// POST /episodes/{id}/transcription/reset
-export async function resetEpisodeTranscription(episodeId, clearOutputs = false, { withCredentials = false, timeoutMs = 15000 } = {}) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${API_ROOT}/episodes/${episodeId}/transcription/reset?clear_outputs=${clearOutputs}`,
-      {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        credentials: withCredentials ? "include" : "same-origin", // if you use session cookies, pass withCredentials=true
-        signal: ctrl.signal,
-      }
-    );
-
-    if (!res.ok) {
-      // Try JSON error, else text, else generic
-      let msg = "Failed to reset transcription";
-      try {
-        const data = await res.json();
-        msg = data?.detail || JSON.stringify(data);
-      } catch {
-        try {
-          msg = await res.text();
-        } catch {}
-      }
-      throw new Error(msg || `HTTP ${res.status}`);
-    }
-
-    // In case the server ever returns 204
-    const text = await res.text();
-    return text ? JSON.parse(text) : {};
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 export async function resummarizeEpisode(episodeId, { summary_words = 800 } = {}) {
-  const url = `${API_ROOT}/episodes/${episodeId}/resummarize?summary_words=${summary_words}`;
-  const res = await fetch(url, { method: "POST", headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    let msg = "Failed to re-summarize";
-    try { msg = (await res.json())?.detail || msg; } catch {}
-    throw new Error(`${msg} (HTTP ${res.status})`);
-  }
-  return res.json();
+  return request(`/episodes/${episodeId}/resummarize?summary_words=${encodeURIComponent(String(summary_words))}`, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  });
 }
-
-
-
-
-export { API_ROOT };
